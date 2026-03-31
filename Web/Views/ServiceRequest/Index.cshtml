@@ -1,0 +1,39 @@
+﻿@page
+@model TechMove1._3.Web.Views.ServiceRequest.IndexModel
+@{
+}
+<h2>Create Service Request</h2>
+
+<form method="post">
+
+    <label>Contract</label>
+    <select name="contractId">
+        @foreach (var c in ViewBag.Contracts)
+        {
+            <option value="@c.Id">@c.Id</option>
+        }
+    </select>
+
+    <label>Description</label>
+    <input type="text" name="description" />
+
+    <label>USD Amount</label>
+    <input type="number" id="usd" name="usdAmount" />
+
+    <label>ZAR Amount</label>
+    <input type="text" id="zar" readonly />
+
+    <button type="submit">Create</button>
+</form>
+
+<script>
+    document.getElementById("usd").addEventListener("input", async function () {
+        let usd = this.value;
+
+        if (usd) {
+            let res = await fetch(`/api/currency?usd=${usd}`);
+            let zar = await res.text();
+            document.getElementById("zar").value = zar;
+        }
+    });
+</script>
