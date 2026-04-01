@@ -16,6 +16,9 @@
         public string Description { get; set; }
         public decimal CostZAR { get; set; }
 
+        // Added to match DbContext precision configuration and support USD storage if needed.
+        public decimal CostUSD { get; set; }
+
         public ServiceStatus Status { get; set; }
     }
 }

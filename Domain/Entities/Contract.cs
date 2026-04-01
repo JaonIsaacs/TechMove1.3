@@ -20,8 +20,12 @@
 
         public ContractStatus Status { get; set; }
 
+        // legacy field retained for compatibility; metadata is the source of truth
         public string SignedFilePath { get; set; }
 
         public ICollection<ServiceRequest> ServiceRequests { get; set; }
+
+        // new: store metadata rows (one-to-many: contract -> files)
+        public ICollection<FileMetadata> Files { get; set; }
     }
 }

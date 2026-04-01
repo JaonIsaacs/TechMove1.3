@@ -1,8 +1,14 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+﻿using System;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using TechMove1._3.Domain.Entities;
 using TechMove1._3.Domain.Interfaces;
 using TechMove1._3.Infrastructure.Data;
+using TechMove1._3.Application.Services;
+using Microsoft.EntityFrameworkCore;
 
 namespace TechMove1._3.Web.Controllers
 {
@@ -10,16 +16,24 @@ namespace TechMove1._3.Web.Controllers
     {
         private readonly AppDbContext _context;
         private readonly IFileService _fileService;
+        private readonly ContractService _contractService;
+        private readonly Application.Observers.ContractSubject _subject;
 
-        public ContractController(AppDbContext context, IFileService fileService)
+        public ContractController(
+            AppDbContext context,
+            IFileService fileService,
+            ContractService contractService,
+            Application.Observers.ContractSubject subject)
         {
             _context = context;
             _fileService = fileService;
+            _contractService = contractService;
+            _subject = subject;
         }
 
-        public async Task<IActionResult> Index()
+        public async Task<IActionResult> Index(DateTime? start, DateTime? end, ContractStatus? status)
         {
-            var contracts = await _context.Contracts.Include(c => c.Client).ToListAsync();
+            var contracts = await _contractService.Search(start, end, status);
             return View(contracts);
         }
 
@@ -32,22 +46,69 @@ namespace TechMove1._3.Web.Controllers
         [HttpPost]
         public async Task<IActionResult> Create(Contract model, IFormFile file)
         {
-            if (file != null)
+            if (!ModelState.IsValid)
+                return View(model);
+
+            if (model.StartDate >= model.EndDate)
             {
-                model.SignedFilePath = await _fileService.SaveFileAsync(file);
+                ModelState.AddModelError(string.Empty, "Start date must be before end date.");
+                ViewBag.Clients = _context.Clients.ToList();
+                return View(model);
             }
 
+            if (!Enum.IsDefined(typeof(ContractStatus), model.Status))
+                model.Status = ContractStatus.Draft;
+
+            // Save contract first so it gets an Id
             _context.Contracts.Add(model);
             await _context.SaveChangesAsync();
 
+            if (file != null)
+            {
+                // Save file to disk (FileService validates extension and content)
+                var path = await _fileService.SaveFileAsync(file);
+
+                // store legacy path on contract (optional)
+                model.SignedFilePath = path;
+                _context.Contracts.Update(model);
+
+                // persist metadata record
+                var meta = new FileMetadata
+                {
+                    ContractId = model.Id,
+                    FileName = Path.GetFileName(path),
+                    Path = path,
+                    Size = new FileInfo(path).Length,
+                    ContentType = file.ContentType ?? "application/pdf",
+                    UploadDate = DateTime.UtcNow
+                };
+                _context.FileMetadatas.Add(meta);
+
+                await _context.SaveChangesAsync();
+            }
+
+            // notify observers about new contract
+            _subject.Notify($"Contract {model.Id} created for client {model.ClientId}");
+
             return RedirectToAction("Index");
         }
-
+            
         public IActionResult Download(int id)
         {
-            var contract = _context.Contracts.Find(id);
-            var bytes = System.IO.File.ReadAllBytes(contract.SignedFilePath);
-            return File(bytes, "application/pdf", "Agreement.pdf");
+            // find most recent file for contract
+            var meta = _context.FileMetadatas
+                .Where(f => f.ContractId == id)
+                .OrderByDescending(f => f.UploadDate)
+                .FirstOrDefault();
+
+            if (meta == null || string.IsNullOrWhiteSpace(meta.Path))
+                return NotFound();
+
+            if (!System.IO.File.Exists(meta.Path))
+                return NotFound();
+
+            var stream = new FileStream(meta.Path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return File(stream, meta.ContentType ?? "application/pdf", meta.FileName);
         }
     }
 }
